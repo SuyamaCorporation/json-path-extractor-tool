@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSONPath Expression Extractor & Tester</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .highlight { background: #fef08a; border-radius: 2px; }
+  .json-key { color: #7c3aed; }
+  .json-string { color: #16a34a; }
+  .json-number { color: #2563eb; }
+  .json-bool { color: #dc2626; }
+  .json-null { color: #6b7280; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+  textarea { font-family: 'Courier New', monospace; font-size: 13px; }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<div class="max-w-7xl mx-auto p-4">
+  <header class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">JSONPath Expression Extractor &amp; Tester</h1>
+    <p class="text-gray-500 text-sm mt-1">Paste JSON and type a path expression to extract values in real-time</p>
+  </header>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+    <!-- Left: JSON Input -->
+    <div class="bg-white rounded-xl shadow p-4">
+      <label class="block text-sm font-semibold text-gray-700 mb-2" for="jsonInput">JSON Input</label>
+      <textarea id="jsonInput" class="w-full h-64 border border-gray-200 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-violet-400 resize-none" placeholder='Paste JSON here...' aria-label="JSON input"></textarea>
+      <div id="jsonError" class="text-red-500 text-xs mt-1 hidden" role="alert"></div>
+      <button onclick="loadSample()" class="mt-2 text-xs text-violet-600 hover:underline">Load sample JSON</button>
+    </div>
+
+    <!-- Right: Path Expression -->
+    <div class="bg-white rounded-xl shadow p-4">
+      <label class="block text-sm font-semibold text-gray-700 mb-2" for="pathInput">JSONPath Expression</label>
+      <input id="pathInput" type="text" class="w-full border border-gray-200 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-violet-400 font-mono text-sm" placeholder="e.g. $.store.book[0].title" aria-label="JSONPath expression input">
+      <div class="mt-2 flex flex-wrap gap-2">
+        <span class="text-xs text-gray-400 font-semibold uppercase tracking-wide">Examples:</span>
+        <button onclick="setPath('$.store.book[*].title')" class="text-xs bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100">$.store.book[*].title</button>
+        <button onclick="setPath('$.store.bicycle.color')" class="text-xs bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100">$.store.bicycle.color</button>
+        <button onclick="setPath('$.store.book[0]')" class="text-xs bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100">$.store.book[0]</button>
+        <button onclick="setPath('$.store.book[*]')" class="text-xs bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100">$.store.book[*]</button>
+        <button onclick="setPath('$.*')" class="text-xs bg-violet-50 text-violet-700 px-2 py-1 rounded hover:bg-violet-100">$.*</button>
+      </div>
+
+      <div class="mt-4">
+        <div class="text-sm font-semibold text-gray-700 mb-1">Notation Guide</div>
+        <div class="grid grid-cols-2 gap-1 text-xs text-gray-500">
+          <div><code class="bg-gray-100 px-1 rounded">$</code> — root</div>
+          <div><code class="bg-gray-100 px-1 rounded">.</code> — child</div>
+          <div><code class="bg-gray-100 px-1 rounded">[n]</code> — array index</div>
+          <div><code class="bg-gray-100 px-1 rounded">[*]</code> — all elements</div>
+          <div><code class="bg-gray-100 px-1 rounded">*</code> — wildcard</div>
+          <div><code class="bg-gray-100 px-1 rounded">['key']</code> — bracket key</div>
+        </div>
+      </div>
+
+      <div id="matchCount" class="mt-3 text-sm font-medium text-gray-600"></div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="bg-white rounded-xl shadow p-4">
+      <h2 class="text-sm font-semibold text-gray-700 mb-2">Highlighted JSON</h2>
+      <div id="highlightedJson" class="font-mono text-sm overflow-auto max-h-80 border border-gray-100 rounded-lg p-3 bg-gray-50" aria-live="polite"></div>
+    </div>
+    <div class="bg-white rounded-xl shadow p-4">
+      <h2 class="text-sm font-semibold text-gray-700 mb-2">Extracted Values</h2>
+      <div id="extractedValues" class="font-mono text-sm overflow-auto max-h-80 border border-gray-100 rounded-lg p-3 bg-gray-50" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SAMPLE = {
+  "store": {
+    "book": [
+      {"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":8.95},
+      {"category":"fiction","author":"Evelyn Waugh","title":"Sword of Honour","price":12.99},
+      {"category":"fiction","author":"Herman Melville","title":"Moby Dick","isbn":"0-553-21311-3","price":8.99},
+      {"category":"fiction","author":"J. R. R. Tolkien","title":"The Lord of the Rings","isbn":"0-395-19395-8","price":22.99}
+    ],
+    "bicycle": {"color":"red","price":19.95}
+  }
+};
+
+function loadSample() {
+  document.getElementById('jsonInput').value = JSON.stringify(SAMPLE, null, 2);
+  evaluate();
+}
+
+function setPath(p) {
+  document.getElementById('pathInput').value = p;
+  evaluate();
+}
+
+function parseJSON(str) {
+  try {
+    return { data: JSON.parse(str), error: null };
+  } catch(e) {
+    return { data: null, error: e.message };
+  }
+}
+
+// Simple JSONPath evaluator
+function evalPath(obj, path) {
+  if (!path || path.trim() === '') return [];
+  path = path.trim();
+  if (!path.startsWith('$')) return [];
+
+  let tokens = tokenizePath(path.slice(1)); // remove $
+  let results = [obj];
+
+  for (let token of tokens) {
+    let next = [];
+    for (let item of results) {
+      if (token === '.' || token === '') continue;
+      if (token === '*') {
+        if (Array.isArray(item)) next.push(...item);
+        else if (item && typeof item === 'object') next.push(...Object.values(item));
+      } else if (token.startsWith('[') && token.endsWith(']')) {
+        let inner = token.slice(1, -1).trim();
+        if (inner === '*') {
+          if (Array.isArray(item)) next.push(...item);
+          else if (item && typeof item === 'object') next.push(...Object.values(item));
+        } else if (/^\d+$/.test(inner)) {
+          let idx = parseInt(inner);
+          if (Array.isArray(item) && item[idx] !== undefined) next.push(item[idx]);
+        } else {
+          let key = inner.replace(/^['"]|['"]$/g, '');
+          if (item && typeof item === 'object' && item[key] !== undefined) next.push(item[key]);
+        }
+      } else {
+        if (item && typeof item === 'object' && item[token] !== undefined) next.push(item[token]);
+      }
+    }
+    results = next;
+  }
+  return results;
+}
+
+function tokenizePath(path) {
+  let tokens = [];
+  let i = 0;
+  while (i < path.length) {
+    if (path[i] === '.') {
+      i++;
+      let key = '';
+      while (i < path.length && path[i] !== '.' && path[i] !== '[') {
+        key += path[i++];
+      }
+      if (key) tokens.push(key);
+    } else if (path[i] === '[') {
+      let bracket = '[';
+      i++;
+      while (i < path.length && path[i] !== ']') bracket += path[i++];
+      bracket += ']';
+      i++; // skip ]
+      tokens.push(bracket);
+    } else {
+      let key = '';
+      while (i < path.length && path[i] !== '.' && path[i] !== '[') key += path[i++];
+      if (key) tokens.push(key);
+    }
+  }
+  return tokens;
+}
+
+function syntaxHighlight(json) {
+  json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
+    let cls = 'json-number';
+    if (/^"/.test(match)) {
+      cls = /:$/.test(match) ? 'json-key' : 'json-string';
+    } else if (/true|false/.test(match)) {
+      cls = 'json-bool';
+    } else if (/null/.test(match)) {
+      cls = 'json-null';
+    }
+    return `<span class="${cls}">${match}</span>`;
+  });
+}
+
+function evaluate() {
+  const jsonStr = document.getElementById('jsonInput').value;
+  const path = document.getElementById('pathInput').value;
+  const errEl = document.getElementById('jsonError');
+  const highlightEl = document.getElementById('highlightedJson');
+  const extractedEl = document.getElementById('extractedValues');
+  const countEl = document.getElementById('matchCount');
+
+  if (!jsonStr.trim()) {
+    highlightEl.innerHTML = '<span class="text-gray-400">Paste JSON in the input above</span>';
+    extractedEl.innerHTML = '';
+    countEl.textContent = '';
+    return;
+  }
+
+  const { data, error } = parseJSON(jsonStr);
+  if (error) {
+    errEl.textContent = 'JSON parse error: ' + error;
+    errEl.classList.remove('hidden');
+    highlightEl.innerHTML = `<pre>${syntaxHighlight(jsonStr)}</pre>`;
+    extractedEl.innerHTML = '';
+    return;
+  }
+  errEl.classList.add('hidden');
+
+  const pretty = JSON.stringify(data, null, 2);
+  highlightEl.innerHTML = `<pre>${syntaxHighlight(pretty)}</pre>`;
+
+  if (!path.trim()) {
+    extractedEl.innerHTML = '<span class="text-gray-400">Enter a path expression above</span>';
+    countEl.textContent = '';
+    return;
+  }
+
+  let results;
+  try {
+    results = evalPath(data, path);
+  } catch(e) {
+    results = [];
+  }
+
+  if (results.length === 0) {
+    extractedEl.innerHTML = '<span class="text-red-400 font-semibold">No match</span>';
+    countEl.innerHTML = '<span class="text-red-500">0 matches</span>';
+    return;
+  }
+
+  countEl.innerHTML = `<span class="text-green-600">${results.length} match${results.length !== 1 ? 'es' : ''} found</span>`;
+
+  let html = results.map((r, i) => {
+    let val = JSON.stringify(r, null, 2);
+    return `<div class="mb-3"><div class="text-xs text-gray-400 mb-1">Result [${i}]</div><pre class="bg-yellow-50 border border-yellow-200 rounded p-2">${syntaxHighlight(val)}</pre></div>`;
+  }).join('');
+  extractedEl.innerHTML = html;
+}
+
+document.getElementById('jsonInput').addEventListener('input', evaluate);
+document.getElementById('pathInput').addEventListener('input', evaluate);
+
+// Load sample on start
+loadSample();
+setPath('$.store.book[*].title');
+</script>
+</body>
+</html>
